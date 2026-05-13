@@ -1,0 +1,90 @@
+==================================================
+SITIOS DE PRUEBA PARA TESTING AUTOMATIZADO
+==================================================
+
+APLICACIONES DE PRUEBA POPULARES:
+
+1. The Internet
+   https://the-internet.herokuapp.com/
+   - Formularios, autenticación, tablas, etc.
+   - Diseñado específicamente para testing
+
+2. DemoQA
+   https://demoqa.com/
+   - Pruebas de elementos, forms, alerts
+   - Muy usado para automation testing
+
+3. Demo Blaze
+   https://www.demoblaze.com/
+   - E-commerce completo
+   - Carrito, checkout, productos
+
+4. OrangeHRM
+   https://opensource-demo.orangehrm.com/
+   - Sistema de RRHH funcional
+   - Datos: admin / admin123
+
+5. Automation Practice
+   https://automationpractice.com/
+   - E-commerce de ropa
+   - Búsqueda, filtros, carrito
+
+6. Practice Automation Bro
+   https://practice.automationbro.com/
+   - Formularios y elementos variados
+   - Perfecto para validación
+
+7. Applitools Demo
+   https://demo.applitools.com/
+   - App moderna con muchas funcionalidades
+   - Para testing visual
+
+8. Swag Labs
+   https://www.saucedemo.com/
+   - App de compra de productos
+   - Usuario: standard_user / password: secret_sauce
+
+9. QA Practice
+   https://qa-practice.adultqa.rocks/
+   - Múltiples elementos para testing
+   - Formularios y validaciones
+
+10. EtherPad (Colaborativo)
+    https://etherpad.org/
+    - Editor de texto colaborativo
+    - Para testing de eventos
+
+==================================================
+CÓMO USAR:
+==================================================
+
+1. Abre http://localhost:5000
+2. Copia una URL del listado anterior
+3. Selecciona modo (Quick/Standard/Deep)
+4. Click "Iniciar Testing"
+5. Observa los bugs encontrados
+
+==================================================
+RECOMENDACIONES POR TIPO:
+==================================================
+
+Para Testing Básico (Quick):
+- https://the-internet.herokuapp.com/
+- https://demoqa.com/
+
+Para Testing Completo (Standard):
+- https://www.demoblaze.com/
+- https://automationpractice.com/
+
+Para Testing Profundo (Deep):
+- https://opensource-demo.orangehrm.com/
+- https://practice.automationbro.com/
+
+==================================================
+NOTAS:
+==================================================
+
+- Algunos sitios tienen datos de prueba preconfigurados
+- La mayoría está optimizada para automation testing
+- No requieren login (excepto OrangeHRM)
+- Son sitios públicos y seguros

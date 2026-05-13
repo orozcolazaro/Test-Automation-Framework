@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greensoft - Intelligent Testing Framework</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo-section">
+                    <div class="logo-icon">🧪</div>
+                    <h1>GREENSOFT TESTING</h1>
+                </div>
+                <p class="tagline">Automatización Inteligente de Testing - QA Senior Edition</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="grid-2">
+            <section class="panel">
+                <h2>⚙️ CONFIGURACIÓN</h2>
+                
+                <div class="form-group">
+                    <label for="target-url">🔗 URL A TESTEAR</label>
+                    <input type="url" id="target-url" placeholder="https://tu-app.com" value="https://example.com">
+                    <small>Ingresa una URL válida (https://...)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="test-mode">⚡ MODO DE TESTING</label>
+                    <select id="test-mode">
+                        <option value="quick">⚡ QUICK (5 min)</option>
+                        <option value="standard" selected>🔧 STANDARD (30 min)</option>
+                        <option value="deep">🔬 DEEP (2 horas)</option>
+                    </select>
+                </div>
+
+                <div class="button-group">
+                    <button id="start-btn" class="btn btn-primary">▶️ INICIAR TESTING</button>
+                    <button id="cancel-btn" class="btn btn-secondary" disabled>⏹️ CANCELAR</button>
+                </div>
+
+                <h3>✨ FUNCIONALIDADES</h3>
+                <div id="features-container" class="features-grid"></div>
+
+                <h3 class="stats-title">📊 ESTADÍSTICAS</h3>
+                <div class="stats-box">
+                    <div class="stat">
+                        <span class="stat-label">TESTS</span>
+                        <span class="stat-value" id="tests-executed">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">BUGS</span>
+                        <span class="stat-value critical" id="bugs-count">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>📊 PROGRESO EN VIVO</h2>
+                
+                <div id="progress-section" style="display: none;">
+                    <div class="progress-item">
+                        <div class="progress-label">
+                            <span id="current-phase">Esperando...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div id="progress-fill" class="progress-fill"></div>
+                        </div>
+                    </div>
+
+                    <div class="logs-section">
+                        <h3>📝 LOGS EN TIEMPO REAL</h3>
+                        <div id="logs-container" class="logs">
+                            <p class="log-placeholder">Los logs aparecerán aquí...</p>
+                        </div>
+                    </div>
+
+                    <div class="session-info">
+                        <p><strong>ID:</strong> <span id="session-id">-</span></p>
+                        <p><strong>URL:</strong> <span id="session-url">-</span></p>
+                        <p><strong>Modo:</strong> <span id="session-mode">-</span></p>
+                    </div>
+                </div>
+
+                <div id="initial-state" class="initial-state">
+                    <p>👈 CONFIGURA Y HAZA CLIC EN "INICIAR TESTING"</p>
+                </div>
+            </section>
+        </div>
+
+        <section id="results-section" class="panel full-width" style="display: none; margin-top: 30px;">
+            <h2>📋 RESULTADOS DEL TESTING</h2>
+            
+            <div class="grid-2">
+                <div>
+                    <h3>📊 RESUMEN</h3>
+                    <div class="summary-card">
+                        <div class="metric">
+                            <span class="metric-label">TOTAL BUGS</span>
+                            <span class="metric-value" id="total-bugs">0</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">CRITICAL</span>
+                            <span class="metric-value critical" id="critical-count">0</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">HIGH</span>
+                            <span class="metric-value high" id="high-count">0</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">MEDIUM</span>
+                            <span class="metric-value medium" id="medium-count">0</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">LOW</span>
+                            <span class="metric-value low" id="low-count">0</span>
+                        </div>
+                    </div>
+
+                    <div id="deployment-recommendation" class="deployment-card block">
+                        🔴 BLOQUEAR DEPLOYMENT
+                    </div>
+                </div>
+
+                <div>
+                    <h3>🐛 BUGS ENCONTRADOS</h3>
+                    <div id="bugs-list" class="bugs-list"></div>
+                </div>
+            </div>
+
+            <h3>💡 RECOMENDACIONES</h3>
+            <ul id="recommendations-list" class="recommendations"></ul>
+
+            <div class="button-group" style="margin-top: 20px;">
+                <button class="btn" onclick="exportJSON()">📥 EXPORTAR JSON</button>
+                <button class="btn" onclick="exportHTML()">📄 EXPORTAR HTML</button>
+                <button class="btn" onclick="exportPDF()">📕 EXPORTAR PDF</button>
+                <button class="btn btn-secondary" onclick="clearAll()">🗑️ LIMPIAR</button>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>🟢 GREENSOFT TESTING FRAMEWORK © 2026 | Automatización Profesional de Testing</p>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
