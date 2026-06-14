@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: greensoft-testing
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # 1 worker = el estado en memoria (test_sessions/test_logs) y los hilos
+    # de los tests viven en un solo proceso compartido. NO subir a >1 worker.
+    # threads = atiende el polling de status/logs mientras el test corre.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT

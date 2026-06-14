@@ -9,6 +9,7 @@ from istqb_report_generator import ISTQBBugReport
 from pdf_generator import PDFReportGenerator
 import time
 import io
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -258,5 +259,6 @@ def send_static(path):
 
 
 if __name__ == '__main__':
-    print("\n🟢 GREENSOFT TESTING - http://localhost:5000\n")
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"\n🟢 GREENSOFT TESTING - http://localhost:{port}\n")
+    app.run(debug=False, host='0.0.0.0', port=port)
