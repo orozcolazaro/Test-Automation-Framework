@@ -6,6 +6,7 @@
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?logo=flask&logoColor=white)
 ![Deploy](https://img.shields.io/badge/Deploy-Render-46E3B7?logo=render&logoColor=white)
 ![Status](https://img.shields.io/badge/status-MVP%20%2F%20demo-yellow)
+[![Demo en vivo](https://img.shields.io/badge/🟢_Demo_en_vivo-online-46E3B7)](https://greensoft-testing.onrender.com/)
 
 ---
 
@@ -68,11 +69,9 @@ Esto es un **MVP / demo funcional del flujo end-to-end**. Para ser transparente 
 
 ## 🌐 Demo en vivo
 
-> Tras desplegar en Render, coloca aquí tu URL pública:
+### 👉 **[greensoft-testing.onrender.com](https://greensoft-testing.onrender.com/)**
 
-```
-https://greensoft-testing.onrender.com
-```
+[![Abrir demo](https://img.shields.io/badge/▶_Abrir_demo-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://greensoft-testing.onrender.com/)
 
 > ℹ️ En el plan gratuito de Render el servicio "duerme" tras ~15 min de inactividad; la primera visita puede tardar 30–60 s en despertar.
 
