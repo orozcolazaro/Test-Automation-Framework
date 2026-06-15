@@ -575,3 +575,64 @@ main {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--greensoft-accent);
 }
+
+/* Casos de prueba */
+.test-cases-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.test-case {
+    background: rgba(0, 255, 170, 0.05);
+    border: 1px solid rgba(0, 255, 170, 0.2);
+    border-left: 4px solid var(--greensoft-cyan);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+
+.test-case.fail { border-left-color: var(--critical); }
+.test-case.blocked { border-left-color: var(--medium); }
+.test-case.pass { border-left-color: var(--low); }
+
+.tc-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.tc-id {
+    font-weight: 700;
+    color: var(--greensoft-cyan);
+    letter-spacing: 0.5px;
+}
+
+.tc-status {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 12px;
+    color: var(--greensoft-dark);
+    background: var(--low);
+}
+
+.tc-status.fail { background: var(--critical); color: var(--white); }
+.tc-status.blocked { background: var(--medium); }
+
+.tc-desc { color: var(--white); margin-bottom: 8px; }
+
+.tc-steps {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: rgba(255, 255, 255, 0.85);
+    margin-bottom: 8px;
+}
+
+.tc-expected { font-size: 13px; color: rgba(255, 255, 255, 0.8); }
+.tc-expected strong { color: var(--greensoft-cyan); }

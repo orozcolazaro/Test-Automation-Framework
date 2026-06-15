@@ -14,6 +14,7 @@ import requests
 from dotenv import load_dotenv
 from analyzer import SiteAnalyzer, SSRFError
 from ai_analyst import AIAnalyst
+from agent import TestAgent
 
 # Carga NVIDIA_API_KEY / NVIDIA_MODEL desde .env en local (en Render se usan
 # las env vars del dashboard; si no hay .env, load_dotenv() no hace nada).
@@ -65,6 +66,7 @@ class TestRunner:
         self.progress = 0
         self.current_phase = "Iniciando"
         self.bugs = []
+        self.test_cases = []
         self.status = "running"
 
     def add_log(self, message: str, level: str = "INFO"):
@@ -106,23 +108,19 @@ class TestRunner:
             if missing:
                 self.add_log(f"  - Headers de seguridad ausentes: {', '.join(missing)}")
 
-            # --- Fase 2: análisis con IA (el "cerebro") ---
-            self.update_progress(55, "Análisis con IA (QA senior)")
+            # --- Fase 2: análisis con IA (el "cerebro" agéntico) ---
+            self.update_progress(55, "Agente IA investigando")
             analyst = AIAnalyst()
             if analyst.available():
-                try:
-                    self.add_log(f"Consultando modelo {analyst.model}...")
-                    self.bugs = analyst.analyze(facts)
-                    self.add_log(f"✓ La IA identificó {len(self.bugs)} hallazgo(s)", "SUCCESS")
-                except Exception as e:
-                    self.add_log(f"⚠ La IA falló ({e}); usando análisis de respaldo", "ERROR")
-                    self.bugs = self._simulated_bugs()
+                self._run_ai(analyst, facts)
             else:
                 self.add_log("⚠ Sin NVIDIA_API_KEY: usando análisis de respaldo (demo)")
                 self.bugs = self._simulated_bugs()
 
             self._finish(status="completed")
-            self.add_log("✓ Testing completado", "SUCCESS")
+            self.add_log(
+                f"✓ Testing completado: {len(self.bugs)} bug(s), {len(self.test_cases)} caso(s) de prueba",
+                "SUCCESS")
 
         except Exception as e:
             self.status = "error"
@@ -130,13 +128,40 @@ class TestRunner:
             if self.session_id in test_sessions:
                 test_sessions[self.session_id]["status"] = "error"
 
+    def _run_ai(self, analyst, facts):
+        """Agente con tool-calling; cae a single-shot y luego a simulado."""
+        # 1) Agente autónomo (tool-calling).
+        try:
+            self.add_log(f"Agente IA ({analyst.model}) explorando con herramientas...")
+            findings = TestAgent(analyst).run(self.target_url, facts=facts, log=self.add_log)
+            self.bugs = findings["bugs"]
+            self.test_cases = findings["test_cases"]
+            self.add_log(f"✓ Agente: {len(self.bugs)} bug(s), {len(self.test_cases)} caso(s)", "SUCCESS")
+            return
+        except Exception as e:
+            self.add_log(f"⚠ Agente falló ({type(e).__name__}); intento análisis simple", "ERROR")
+
+        # 2) Análisis single-shot (1 sola llamada).
+        try:
+            findings = analyst.analyze(facts)
+            self.bugs = findings["bugs"]
+            self.test_cases = findings["test_cases"]
+            self.add_log(f"✓ Análisis simple: {len(self.bugs)} bug(s)", "SUCCESS")
+            return
+        except Exception as e:
+            self.add_log(f"⚠ Análisis IA falló ({type(e).__name__}); usando respaldo", "ERROR")
+
+        # 3) Respaldo simulado (la demo nunca se rompe).
+        self.bugs = self._simulated_bugs()
+
     def _finish(self, status: str):
-        """Persiste bugs y estado final en la sesión."""
+        """Persiste bugs, casos de prueba y estado final en la sesión."""
         self.status = status
         self.update_progress(100, "Completado" if status == "completed" else "Error")
         if self.session_id in test_sessions:
             test_sessions[self.session_id]["status"] = status
             test_sessions[self.session_id]["bugs"] = self.bugs
+            test_sessions[self.session_id]["test_cases"] = self.test_cases
 
     def _simulated_bugs(self):
         """Datos de respaldo cuando no hay IA disponible (mantiene viva la demo)."""
@@ -218,6 +243,7 @@ def test_report(session_id):
     
     session = test_sessions[session_id]
     bugs = session.get("bugs", [])
+    test_cases = session.get("test_cases", [])
     by_sev, recommendation = _summarize_bugs(bugs)
 
     return jsonify({
@@ -228,6 +254,8 @@ def test_report(session_id):
         "total_bugs": len(bugs),
         "bugs_by_severity": by_sev,
         "bugs": bugs,
+        "test_cases": test_cases,
+        "total_test_cases": len(test_cases),
         "deployment_recommendation": recommendation
     })
 
@@ -240,8 +268,9 @@ def test_report_pdf(session_id):
         
         session = test_sessions[session_id]
 
-        # Bugs reales detectados en la sesión (con fallback vacío)
+        # Bugs y casos de prueba reales detectados en la sesión
         bugs = session.get("bugs", [])
+        test_cases = session.get("test_cases", [])
 
         # Generar PDF
         pdf_gen = PDFReportGenerator()
@@ -254,7 +283,7 @@ def test_report_pdf(session_id):
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
             pdf_path = tmp.name
         
-        pdf_gen.generate_pdf(pdf_path, session_id, session['target_url'], session['mode'], bugs)
+        pdf_gen.generate_pdf(pdf_path, session_id, session['target_url'], session['mode'], bugs, test_cases)
         
         with open(pdf_path, 'rb') as f:
             pdf_data = f.read()
@@ -272,6 +301,29 @@ def test_report_pdf(session_id):
     except Exception as e:
         print(f"Error PDF: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/test-report-istqb/<session_id>')
+def test_report_istqb(session_id):
+    """Reporte HTML en formato ISTQB con los bugs reales de la sesión."""
+    if session_id not in test_sessions:
+        return jsonify({"error": "No encontrado"}), 404
+
+    session = test_sessions[session_id]
+    report = ISTQBBugReport()
+    for i, b in enumerate(session.get("bugs", []), 1):
+        report.add_bug({
+            "id": f"BUG_{i:03d}",
+            "title": b.get("title", ""),
+            "description": b.get("description", ""),
+            "severity": b.get("severity", "MEDIUM"),
+            "expected": b.get("expected", ""),
+            "actual": b.get("actual", ""),
+            "impact": b.get("impact", ""),
+            "services": b.get("services", []),
+        })
+    html = report.generate_html_report(session_id, session["target_url"], session["mode"])
+    return app.response_class(html, mimetype="text/html")
 
 
 @app.route('/api/features')

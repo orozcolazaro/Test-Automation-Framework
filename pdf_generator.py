@@ -51,10 +51,18 @@ class PDFReportGenerator:
             spaceAfter=10,
             alignment=TA_JUSTIFY
         ))
+
+        self.styles.add(ParagraphStyle(
+            name='TableCell',
+            fontSize=8,
+            textColor=colors.black,
+            leading=10
+        ))
     
-    def generate_pdf(self, filename: str, session_id: str, target_url: str, 
-                     mode: str, bugs: list):
+    def generate_pdf(self, filename: str, session_id: str, target_url: str,
+                     mode: str, bugs: list, test_cases: list = None):
         """Genera PDF con reporte ISTQB"""
+        test_cases = test_cases or []
         
         doc = SimpleDocTemplate(
             filename,
@@ -178,6 +186,37 @@ class PDFReportGenerator:
             story.append(detail_table)
             story.append(Spacer(1, 15))
         
+        # Casos de prueba
+        if test_cases:
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("CASOS DE PRUEBA", self.styles['BugTitle']))
+            story.append(Spacer(1, 12))
+
+            cell = self.styles['TableCell']
+            tc_header = ['ID', 'Descripción', 'Resultado esperado', 'Status']
+            tc_rows = [tc_header]
+            for tc in test_cases:
+                tc_rows.append([
+                    Paragraph(tc.get('id', ''), cell),
+                    Paragraph(tc.get('description', ''), cell),
+                    Paragraph(tc.get('expected', ''), cell),
+                    Paragraph(tc.get('status', ''), cell),
+                ])
+            tc_table = Table(tc_rows, colWidths=[0.9*inch, 2.6*inch, 2.0*inch, 0.8*inch])
+            tc_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#00ff99')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                ('ALIGN', (3, 0), (3, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ]))
+            story.append(tc_table)
+
         # Footer
         story.append(Spacer(1, 20))
         story.append(Paragraph(

@@ -155,6 +155,31 @@ function displayResults(data) {
             <div style="margin-top: 8px; font-size: 12px;">Servicios: ${(bug.services || []).join(', ')}</div>
         </div>
     `).join('');
+
+    renderTestCases(data.test_cases || []);
+}
+
+function renderTestCases(cases) {
+    const el = document.getElementById('test-cases-list');
+    if (!el) return;
+    if (!cases.length) {
+        el.innerHTML = '<p class="log-placeholder">Sin casos de prueba.</p>';
+        return;
+    }
+    el.innerHTML = cases.map(tc => {
+        const status = (tc.status || 'PASS').toLowerCase();
+        const steps = (tc.steps || []).map(s => `<div>${s}</div>`).join('');
+        return `
+        <div class="test-case ${status}">
+            <div class="tc-head">
+                <span class="tc-id">${tc.id}</span>
+                <span class="tc-status ${status}">${(tc.status || 'PASS')}</span>
+            </div>
+            <div class="tc-desc">${tc.description || ''}</div>
+            ${steps ? `<div class="tc-steps">${steps}</div>` : ''}
+            <div class="tc-expected"><strong>Esperado:</strong> ${tc.expected || ''}</div>
+        </div>`;
+    }).join('');
 }
 
 function cancelTesting() {
