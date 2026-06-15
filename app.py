@@ -7,15 +7,53 @@ import uuid
 from datetime import datetime
 from istqb_report_generator import ISTQBBugReport
 from pdf_generator import PDFReportGenerator
-import time
 import io
 import os
+
+import requests
+from dotenv import load_dotenv
+from analyzer import SiteAnalyzer, SSRFError
+from ai_analyst import AIAnalyst
+
+# Carga NVIDIA_API_KEY / NVIDIA_MODEL desde .env en local (en Render se usan
+# las env vars del dashboard; si no hay .env, load_dotenv() no hace nada).
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
 test_sessions: Dict = {}
 test_logs: Dict = {}
+
+
+def _make_bug(severity, title, description, expected="", actual="", impact="", services=None):
+    """Construye un bug con el mismo esquema que produce AIAnalyst."""
+    sev = severity.upper()
+    return {
+        "severity": sev,
+        "type": sev.lower(),
+        "title": title,
+        "description": description,
+        "expected": expected,
+        "actual": actual,
+        "impact": impact,
+        "services": services or [],
+    }
+
+
+def _summarize_bugs(bugs):
+    """Cuenta por severidad y deriva la recomendación de despliegue."""
+    by_sev = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for b in bugs:
+        sev = b.get("severity", "MEDIUM").upper()
+        by_sev[sev] = by_sev.get(sev, 0) + 1
+    if by_sev["CRITICAL"] > 0:
+        rec = "BLOQUEAR - Bug crítico encontrado"
+    elif by_sev["HIGH"] > 0:
+        rec = "REVISAR - Bugs de alta severidad"
+    else:
+        rec = "OK - Sin bloqueantes"
+    return by_sev, rec
 
 
 class TestRunner:
@@ -44,53 +82,71 @@ class TestRunner:
     
     def run(self):
         try:
-            self.update_progress(20, "Testing Básico")
-            self.add_log("Iniciando fase 1: Testing Básico...")
-            self._phase_basic()
-            
-            if self.mode in ["standard", "deep"]:
-                self.update_progress(40, "Testing Iterativo")
-                self.add_log("Iniciando fase 2...")
-                self._phase_iterative()
-            
-            if self.mode in ["standard", "deep"]:
-                self.update_progress(60, "Análisis de APIs")
-                self.add_log("Iniciando fase 3...")
-                self._phase_api()
-            
-            if self.mode == "deep":
-                self.update_progress(80, "Testing Avanzado")
-                self.add_log("Iniciando fase 4...")
-                self._phase_advanced()
-            
-            self.update_progress(100, "Completado")
-            self.status = "completed"
-            test_sessions[self.session_id]["status"] = "completed"
+            # --- Fase 1: recolección de datos reales (las "manos") ---
+            self.update_progress(15, "Recolectando datos del sitio")
+            self.add_log(f"Analizando {self.target_url} (modo {self.mode})...")
+
+            try:
+                facts = SiteAnalyzer().collect(self.target_url)
+            except SSRFError as e:
+                self.add_log(f"✗ URL no permitida: {e}", "ERROR")
+                self._finish(status="error")
+                return
+            except requests.RequestException as e:
+                # El sitio no responde ES un hallazgo real.
+                self.add_log(f"✗ El sitio no responde: {e}", "ERROR")
+                self.bugs = [_make_bug("CRITICAL", "El sitio no responde",
+                                       f"No se pudo establecer conexión: {e}",
+                                       services=["Infraestructura"])]
+                self._finish(status="completed")
+                return
+
+            self.add_log(f"✓ Responde {facts['status_code']} en {facts['elapsed_ms']}ms", "SUCCESS")
+            missing = facts.get("security_headers", {}).get("missing", [])
+            if missing:
+                self.add_log(f"  - Headers de seguridad ausentes: {', '.join(missing)}")
+
+            # --- Fase 2: análisis con IA (el "cerebro") ---
+            self.update_progress(55, "Análisis con IA (QA senior)")
+            analyst = AIAnalyst()
+            if analyst.available():
+                try:
+                    self.add_log(f"Consultando modelo {analyst.model}...")
+                    self.bugs = analyst.analyze(facts)
+                    self.add_log(f"✓ La IA identificó {len(self.bugs)} hallazgo(s)", "SUCCESS")
+                except Exception as e:
+                    self.add_log(f"⚠ La IA falló ({e}); usando análisis de respaldo", "ERROR")
+                    self.bugs = self._simulated_bugs()
+            else:
+                self.add_log("⚠ Sin NVIDIA_API_KEY: usando análisis de respaldo (demo)")
+                self.bugs = self._simulated_bugs()
+
+            self._finish(status="completed")
             self.add_log("✓ Testing completado", "SUCCESS")
-        
+
         except Exception as e:
             self.status = "error"
-            self.add_log(f"✗ Error: {str(e)}", "ERROR")
-    
-    def _phase_basic(self):
-        time.sleep(1)
-        self.add_log("✓ Verificando UI")
-        self.add_log("  - [HIGH] Imagen no carga")
-        time.sleep(0.5)
-        self.add_log("✓ Validando formularios")
-    
-    def _phase_iterative(self):
-        self.add_log("Ejecutando iteraciones...")
-        time.sleep(0.5)
-    
-    def _phase_api(self):
-        time.sleep(1)
-        self.add_log("Testeando endpoints...")
-        self.add_log("  - [CRITICAL] SQL Injection")
-    
-    def _phase_advanced(self):
-        time.sleep(1)
-        self.add_log("✓ Verificando seguridad")
+            self.add_log(f"✗ Error inesperado: {str(e)}", "ERROR")
+            if self.session_id in test_sessions:
+                test_sessions[self.session_id]["status"] = "error"
+
+    def _finish(self, status: str):
+        """Persiste bugs y estado final en la sesión."""
+        self.status = status
+        self.update_progress(100, "Completado" if status == "completed" else "Error")
+        if self.session_id in test_sessions:
+            test_sessions[self.session_id]["status"] = status
+            test_sessions[self.session_id]["bugs"] = self.bugs
+
+    def _simulated_bugs(self):
+        """Datos de respaldo cuando no hay IA disponible (mantiene viva la demo)."""
+        return [
+            _make_bug("CRITICAL", "SQL Injection en /api/users", "Parámetro vulnerable",
+                      services=["API", "Database", "Auth"]),
+            _make_bug("HIGH", "Imagen de logo no carga", "HTTP 404", services=["Frontend", "CDN"]),
+            _make_bug("MEDIUM", "Email validation", "Acepta inválidos", services=["Backend"]),
+            _make_bug("MEDIUM", "maxlength", "Sin límite", services=["Frontend"]),
+        ]
 
 
 @app.route('/')
@@ -161,21 +217,18 @@ def test_report(session_id):
         return jsonify({"error": "No encontrado"}), 404
     
     session = test_sessions[session_id]
-    
+    bugs = session.get("bugs", [])
+    by_sev, recommendation = _summarize_bugs(bugs)
+
     return jsonify({
         "session_id": session_id,
         "target_url": session["target_url"],
         "mode": session["mode"],
         "status": session["status"],
-        "total_bugs": 4,
-        "bugs_by_severity": {"CRITICAL": 1, "HIGH": 1, "MEDIUM": 2, "LOW": 0},
-        "bugs": [
-            {"type": "critical", "title": "SQL Injection en /api/users", "description": "Parámetro vulnerable", "services": ["API", "Database", "Auth"]},
-            {"type": "high", "title": "Imagen de logo no carga", "description": "HTTP 404", "services": ["Frontend", "CDN"]},
-            {"type": "medium", "title": "Email validation", "description": "Acepta inválidos", "services": ["Backend"]},
-            {"type": "medium", "title": "maxlength", "description": "Sin límite", "services": ["Frontend"]}
-        ],
-        "deployment_recommendation": "BLOQUEAR"
+        "total_bugs": len(bugs),
+        "bugs_by_severity": by_sev,
+        "bugs": bugs,
+        "deployment_recommendation": recommendation
     })
 
 
@@ -186,14 +239,10 @@ def test_report_pdf(session_id):
             return jsonify({"error": "Sesión no encontrada"}), 404
         
         session = test_sessions[session_id]
-        
-        # Datos de bugs
-        bugs = [
-            {"severity": "CRITICAL", "title": "SQL Injection en /api/users", "description": "Parámetro vulnerable"},
-            {"severity": "HIGH", "title": "Imagen no carga", "description": "HTTP 404"},
-            {"severity": "MEDIUM", "title": "Email validation", "description": "Acepta inválidos"},
-        ]
-        
+
+        # Bugs reales detectados en la sesión (con fallback vacío)
+        bugs = session.get("bugs", [])
+
         # Generar PDF
         pdf_gen = PDFReportGenerator()
         

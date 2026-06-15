@@ -62,6 +62,8 @@ graph TD
 | Archivo | Responsabilidad | Notas |
 |---|---|---|
 | `app.py` | Servidor Flask, rutas de la API, clase `TestRunner` y almacén en memoria | Punto de entrada. |
+| `analyzer.py` | **"Manos"**: `SiteAnalyzer` recoge datos reales del sitio (status, headers de seguridad, formularios, accesibilidad, mixed-content) + guard anti-SSRF. | `requests` + `beautifulsoup4`. |
+| `ai_analyst.py` | **"Cerebro"**: `AIAnalyst` envía los datos a un LLM de NVIDIA y devuelve los bugs en JSON (parseo defensivo). | Cliente `openai` apuntando a NVIDIA NIM. |
 | `istqb_report_generator.py` | Clase `ISTQBBugReport`: normaliza un bug al esquema ISTQB (severidad→prioridad, entorno, pasos, adjuntos…). | Modelo de datos de defectos. |
 | `pdf_generator.py` | Clase `PDFReportGenerator`: arma el PDF con `reportlab` (portada, resumen, tabla por bug). | Estilo de marca Greensoft (`#00ff99`). |
 | `templates/index.html` | Dashboard de una sola página. | Servida por la ruta `/`. |
@@ -71,19 +73,17 @@ graph TD
 
 ### Anatomía de `TestRunner` (`app.py`)
 
-Cada sesión instancia un `TestRunner(session_id, target_url, mode)` que se ejecuta en su propio hilo. Su método `run()` ejecuta fases según el modo:
+Cada sesión instancia un `TestRunner(session_id, target_url, mode)` que se ejecuta en su propio hilo. Su método `run()` ejecuta dos etapas:
 
-| Modo | Fases ejecutadas | Progreso |
-|---|---|---|
-| `quick` | `_phase_basic` | 20% → 100% |
-| `standard` | `_phase_basic` → `_phase_iterative` → `_phase_api` | 20% → 60% → 100% |
-| `deep` | las 3 anteriores + `_phase_advanced` | 20% → 80% → 100% |
+1. **Recolección (15%)** — `SiteAnalyzer().collect(url)` obtiene los hechos del sitio. Si la URL es interna lanza `SSRFError` (sesión → `error`); si el sitio no responde, eso mismo se registra como un bug `CRITICAL`.
+2. **Análisis con IA (55% → 100%)** — `AIAnalyst().analyze(facts)` devuelve los bugs. Si no hay `NVIDIA_API_KEY` o la llamada falla, se hace **fallback** a `_simulated_bugs()` para que la demo no se rompa.
 
 Métodos auxiliares:
 - `add_log(message, level)` — agrega una línea con timestamp y la sincroniza con `test_logs[session_id]`.
 - `update_progress(progress, phase)` — actualiza `test_sessions[session_id]`.
+- `_finish(status)` — persiste `bugs` y estado final en la sesión.
 
-> ⚠️ Hoy las fases `_phase_*` **simulan** trabajo con `time.sleep()` y emiten logs/bugs de ejemplo. Aquí es donde se conecta la lógica de pruebas real (ver [Puntos de extensión](#puntos-de-extensión)).
+> El parámetro `mode` (`quick`/`standard`/`deep`) hoy modula la narrativa de progreso; profundizar el análisis por modo (p.ej. crawl multi-página en `deep`) está en el [roadmap](../README.md#-roadmap).
 
 ---
 
@@ -270,47 +270,29 @@ services:
 ```
 
 - El puerto se lee de la variable de entorno `PORT` (inyectada por Render) tanto en `app.run` (desarrollo) como vía `--bind` en gunicorn (producción).
+- **IA:** se activa con la env var `NVIDIA_API_KEY` (y opcionalmente `NVIDIA_MODEL`) en el dashboard de Render. Sin ella, modo demo.
 - Redeploy automático en cada push a la rama por defecto.
 - **Plan free:** el servicio se suspende tras ~15 min sin tráfico (arranque en frío al volver) y, al reiniciarse, **se pierde el estado en memoria**.
 
 ---
 
+## Integración con el LLM (NVIDIA NIM)
+
+`AIAnalyst` (`ai_analyst.py`) usa el SDK `openai` apuntando al endpoint compatible de NVIDIA:
+
+- **base_url:** `https://integrate.api.nvidia.com/v1`
+- **modelo por defecto:** `z-ai/glm-5.1` (configurable con `NVIDIA_MODEL`)
+- **prompt:** un *system prompt* que fija el rol de QA senior y exige salida en array JSON; el *user prompt* contiene los hechos de `SiteAnalyzer` serializados.
+- **parseo defensivo:** `_extract_json_array()` intenta (1) `json.loads` directo, (2) bloque dentro de ``` ```json ```, (3) del primer `[` al último `]`. Si todo falla, lanza y el `TestRunner` hace fallback.
+- **normalización:** `_normalize_bug()` valida la severidad y añade el campo `type` (compat con el reporte JSON).
+
+> Razones de diseño: se eligió un modelo *instruct/agéntico* (no *reasoning* ni *omni*) para obtener JSON limpio; el parseo defensivo cubre los casos en que el modelo igual envuelve la respuesta en texto.
+
 ## Puntos de extensión
 
-El lugar para convertir la demo en un framework de pruebas real es la clase **`TestRunner`** en `app.py`. Cada método `_phase_*` debe:
-
-1. Ejecutar pruebas reales contra `self.target_url`.
-2. Emitir logs con `self.add_log(...)`.
-3. Acumular defectos en `self.bugs` (en el esquema que consume `ISTQBBugReport`).
-
-Ejemplo de dirección para `_phase_basic` usando peticiones reales:
-
-```python
-import requests
-
-def _phase_basic(self):
-    self.add_log("✓ Verificando disponibilidad")
-    try:
-        resp = requests.get(self.target_url, timeout=10)
-        if resp.status_code >= 400:
-            self.bugs.append({
-                "severity": "HIGH",
-                "title": f"La URL responde {resp.status_code}",
-                "description": "El recurso principal no está disponible.",
-                "services": ["Frontend"],
-            })
-    except requests.RequestException as e:
-        self.bugs.append({
-            "severity": "CRITICAL",
-            "title": "El sitio no responde",
-            "description": str(e),
-            "services": ["Infra"],
-        })
-```
-
-Después, ajusta `/api/test-report` para que devuelva `runner.bugs` reales (hoy devuelve datos de ejemplo). Para pruebas de navegador (UI real), integra **Selenium** o **Playwright**; para análisis de HTML/endpoints, `requests` + `beautifulsoup4`.
-
-Otros puntos de extensión:
+- **Tool-calling agéntico:** en vez de una sola llamada, dar al LLM herramientas (`fetch_page`, `check_headers`, `probe_form`…) y dejar que decida en un loop. Sube de "cerebro analista" a "agente autónomo".
+- **Navegador real:** integrar Selenium/Playwright en `analyzer.py` para sitios con JS pesado y pruebas de UI reales.
+- **Profundidad por modo:** que `deep` haga crawl multi-página y más llamadas al LLM (cuidando el límite de 40 rpm).
 - **Persistencia:** sustituir los diccionarios en memoria por Redis/SQLite para sobrevivir reinicios y habilitar múltiples workers.
 - **JIRA:** en `ISTQBBugReport`, añadir un método que cree issues vía la API de JIRA.
 - **Formatos de reporte:** añadir export HTML/CSV junto al PDF existente.
@@ -319,8 +301,10 @@ Otros puntos de extensión:
 
 ## Limitaciones conocidas
 
-1. **Motor de pruebas simulado** — las fases no ejecutan pruebas reales todavía.
-2. **Estado volátil** — todo vive en memoria; un reinicio borra sesiones y reportes.
-3. **Un solo worker** — no escala horizontalmente hasta externalizar el estado.
-4. **Sin autenticación** — cualquiera con la URL puede lanzar tests; no exponer públicamente sin proteger.
-5. **PDF vía archivo temporal** — funciona, pero conviene migrar a buffer en memoria.
+1. **Análisis estático (sin navegador)** — `analyzer.py` usa `requests`, no ejecuta JS; sitios SPA pesados se ven parcialmente. Selenium/Playwright está en el roadmap.
+2. **Una sola llamada al LLM por sesión** — no es un loop agéntico con tool-calling (todavía).
+3. **Estado volátil** — todo vive en memoria; un reinicio borra sesiones y reportes.
+4. **Un solo worker** — no escala horizontalmente hasta externalizar el estado.
+5. **Sin autenticación** — cualquiera con la URL puede lanzar tests; el guard anti-SSRF mitiga el abuso de red, pero no exponer sin proteger.
+6. **PDF vía archivo temporal** — funciona, pero conviene migrar a buffer en memoria.
+7. **Rate limit** — tier gratuito de NVIDIA: 40 req/min.

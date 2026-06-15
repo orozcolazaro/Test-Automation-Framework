@@ -39,25 +39,25 @@ Está pensado como base para un asistente de QA: define el *flujo* completo (orq
 
 ---
 
-## ⚠️ Estado actual (importante)
-
-Esto es un **MVP / demo funcional del flujo end-to-end**. Para ser transparente sobre qué hace hoy:
+## ⚠️ Estado actual
 
 | Componente | Estado |
 |---|---|
 | Interfaz web, API REST, monitoreo en vivo, descarga de PDF | ✅ **Real y funcional** |
 | Generación de reportes ISTQB (JSON + PDF con `reportlab`) | ✅ **Real y funcional** |
-| Modos `quick` / `standard` / `deep` y sistema de fases | ✅ **Real** (orquestación) |
-| **Motor de pruebas** (`TestRunner._phase_*`) | 🟡 **Simulado** — usa `time.sleep()` y logs/bugs de ejemplo |
-| Bugs devueltos por `/api/test-report` | 🟡 **Datos de ejemplo** (hardcoded) |
-| Integración con JIRA, Selenium, etc. | 🔴 **No implementado** (visión documentada en `PROJECT_PROMPT.md`) |
+| **Recolección de datos del sitio** (`analyzer.py`) | ✅ **Real** — status, headers de seguridad, formularios, accesibilidad, mixed-content + guard anti-SSRF |
+| **Análisis con IA** (`ai_analyst.py` → NVIDIA NIM) | ✅ **Real** — un LLM razona sobre los datos como QA senior y genera los bugs |
+| Bugs devueltos por `/api/test-report` y el PDF | ✅ **Reales** (con fallback a datos de ejemplo si no hay API key) |
+| Integración con JIRA, navegador real (Selenium/Playwright) | 🔴 **No implementado** (en el [roadmap](#-roadmap)) |
 
-👉 La arquitectura está lista para reemplazar la simulación por pruebas reales. Mira [cómo extenderlo](docs/ARCHITECTURE.md#puntos-de-extensión) en la documentación técnica.
+> 🧠 **Sin `NVIDIA_API_KEY` configurada, la app funciona igual en modo demo** (usa bugs de ejemplo), así que el despliegue nunca se rompe. Con la key activa, el análisis es real e inteligente.
 
 ---
 
 ## ✨ Características
 
+- 🧠 **Análisis agéntico con IA**: un LLM (vía NVIDIA NIM) razona sobre los datos reales del sitio como un QA senior y genera los defectos.
+- 🛡️ **Recolección real + guard anti-SSRF**: inspecciona headers de seguridad, formularios, accesibilidad y mixed-content; bloquea URLs internas.
 - 🎨 **Dashboard de una sola página** (HTML/CSS/JS, sin frameworks pesados).
 - ⚡ **Ejecución asíncrona**: cada test corre en un hilo en segundo plano; la UI hace *polling* de estado y logs.
 - 📊 **8 áreas de testing** declaradas: UI, Lógica, Performance, Seguridad, API, Integridad de Datos, Manejo de Estado y Edge Cases.
@@ -96,13 +96,26 @@ source venv/bin/activate
 # 3. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. Ejecutar
+# 4. (Opcional) Activar el análisis con IA
+#    Copia .env.example a .env y pon tu NVIDIA_API_KEY.
+#    Sin esto, la app corre en modo demo (bugs de ejemplo).
+
+# 5. Ejecutar
 python app.py
 ```
 
 Abre **http://localhost:5000** 🟢
 
 En Windows también puedes usar el script `run.bat`.
+
+### Activar el análisis con IA
+
+```bash
+cp .env.example .env      # Windows: copy .env.example .env
+# edita .env y pon tu key real:  NVIDIA_API_KEY=nvapi-...
+```
+
+La key se obtiene gratis en [build.nvidia.com](https://build.nvidia.com) → **API Keys** (tier gratuito: 40 req/min). El modelo por defecto es `z-ai/glm-5.1` y se puede cambiar con `NVIDIA_MODEL`. Detalles en [Análisis con IA](#-análisis-con-ia-nvidia).
 
 ---
 
@@ -114,6 +127,9 @@ El repo incluye un `render.yaml` (Blueprint), así que el despliegue es práctic
 2. **New +** → **Blueprint**.
 3. Conecta este repositorio. Render detectará `render.yaml`.
 4. Pulsa **Apply** y espera el primer build (~2–3 min).
+5. **Para activar la IA:** en el servicio → **Environment** → añade la variable
+   `NVIDIA_API_KEY` con tu key (márcala como *secret*). Opcionalmente `NVIDIA_MODEL`.
+   Sin esta variable, el servicio corre en modo demo (no se rompe).
 
 Cada `git push` a la rama por defecto dispara un **redeploy automático**.
 
@@ -126,6 +142,31 @@ gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
 ```
 
 `--workers 1` es **obligatorio**: el estado de las sesiones (`test_sessions`, `test_logs`) y los hilos de los tests viven **en memoria dentro de un único proceso**. Con varios workers, `/start-test` y `/test-status` podrían caer en procesos distintos y la sesión "desaparecería". `--threads 8` permite atender el *polling* mientras el test corre. Detalles en la [documentación técnica](docs/ARCHITECTURE.md#modelo-de-concurrencia).
+
+---
+
+## 🧠 Análisis con IA (NVIDIA)
+
+El salto agéntico del framework. El flujo separa **"manos"** y **"cerebro"**:
+
+```
+analyzer.py (manos)            ai_analyst.py (cerebro)
+recoge datos REALES   ───────► LLM de NVIDIA razona como
+del sitio objetivo             QA senior y devuelve bugs (JSON)
+```
+
+1. **`analyzer.py`** hace fetch de la URL y extrae hechos verificables: status HTTP, tiempo de respuesta, **headers de seguridad** (CSP, HSTS, X-Frame-Options…), formularios, imágenes sin `alt`, mixed-content, viewport, `lang`. Incluye un **guard anti-SSRF** que bloquea IPs privadas/loopback/metadata.
+2. **`ai_analyst.py`** envía esos hechos a un LLM (endpoint compatible con OpenAI de NVIDIA NIM) que los analiza y devuelve una lista de defectos clasificados por severidad. El parseo del JSON es **defensivo** (tolera respuestas envueltas en texto/razonamiento).
+3. Si la IA no está disponible o falla, el sistema hace **fallback** a datos de ejemplo: la demo nunca se rompe.
+
+**Configuración** (variables de entorno / `.env`):
+
+| Variable | Requerida | Por defecto | Descripción |
+|---|---|---|---|
+| `NVIDIA_API_KEY` | Para la IA | — | Tu key de build.nvidia.com (`nvapi-...`). |
+| `NVIDIA_MODEL` | No | `z-ai/glm-5.1` | Modelo a usar. Alternativas: `meta/llama-3.3-70b-instruct`, `nvidia/nemotron-3-nano-30b-a3b`. |
+
+> 🔒 El `.env` está en `.gitignore`: la key **nunca** se sube al repo.
 
 ---
 
@@ -179,6 +220,8 @@ La especificación detallada (request/response, códigos de error) está en [`do
 ```
 Test-Automation-Framework/
 ├── app.py                      # Servidor Flask + API + TestRunner (orquestación)
+├── analyzer.py                 # "Manos": recoge datos del sitio + guard anti-SSRF
+├── ai_analyst.py               # "Cerebro": analiza los datos con un LLM de NVIDIA
 ├── istqb_report_generator.py   # Modelo de defectos en formato ISTQB
 ├── pdf_generator.py            # Exporta el reporte a PDF (reportlab)
 ├── monitor.py                  # CLI: monitoreo de una sesión en vivo
@@ -191,6 +234,7 @@ Test-Automation-Framework/
 │   └── js/main.js              # Lógica de cliente (polling, render)
 ├── test_urls.txt               # Sitios públicos de práctica para testing
 ├── requirements.txt            # Dependencias Python
+├── .env.example                # Plantilla de configuración (copiar a .env)
 ├── render.yaml                 # Blueprint de despliegue en Render
 ├── run.bat                     # Arranque rápido en Windows
 ├── PROJECT_PROMPT.md           # Visión / especificación del producto
@@ -210,8 +254,12 @@ La documentación técnica completa (arquitectura, modelo de concurrencia, flujo
 
 ## 🗺️ Roadmap
 
-- [ ] Reemplazar el motor simulado por pruebas reales (Selenium / Playwright / `requests` + `beautifulsoup4`).
-- [ ] Detección real de vulnerabilidades (SQLi, XSS, headers de seguridad).
+- [x] **Análisis real con IA** (NVIDIA NIM) sobre datos recogidos del sitio.
+- [x] Recolección real: headers de seguridad, formularios, accesibilidad, mixed-content.
+- [x] Guard anti-SSRF.
+- [ ] **Tool-calling agéntico**: que el LLM decida qué pruebas ejecutar en un loop autónomo.
+- [ ] Navegador real (Selenium / Playwright) para sitios con JS pesado y pruebas de UI.
+- [ ] Pruebas activas de seguridad (SQLi, XSS) — con autorización del objetivo.
 - [ ] Persistir sesiones y reportes (SQLite / Redis) para que sobrevivan a reinicios.
 - [ ] Integración real con JIRA (creación automática de issues).
 - [ ] Exportar reportes también en HTML y CSV.
