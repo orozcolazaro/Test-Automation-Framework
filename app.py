@@ -398,13 +398,11 @@ def history():
 
 @app.route('/api/clear-history', methods=['POST'])
 def clear_history():
+    # Limpia solo el estado en memoria. El historial persistido NO se borra
+    # desde aquí: la app es pública y un borrado de la DB sería destructivo
+    # para cualquier visitante. (storage.clear() existe para uso administrativo.)
     test_sessions.clear()
     test_logs.clear()
-    if storage.enabled():
-        try:
-            storage.clear()
-        except Exception:
-            pass
     return jsonify({"status": "ok"})
 
 

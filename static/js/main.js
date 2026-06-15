@@ -305,11 +305,10 @@ function downloadBlob(blob, filename) {
 }
 
 function clearAll() {
-    if (confirm('¿Limpiar historial?')) {
-        fetch('/api/clear-history', { method: 'POST' });
-        currentSessionId = null;
-        progressSection.style.display = 'none';
-        resultsSection.style.display = 'none';
-        initialState.style.display = 'block';
-    }
+    // Solo resetea la vista local. NO borra el historial persistido
+    // (la app es pública: no exponemos un borrado destructivo de la DB).
+    currentSessionId = null;
+    progressSection.style.display = 'none';
+    resultsSection.style.display = 'none';
+    initialState.style.display = 'block';
 }
