@@ -63,7 +63,8 @@ graph TD
 |---|---|---|
 | `app.py` | Servidor Flask, rutas de la API, clase `TestRunner` y almacén en memoria | Punto de entrada. |
 | `analyzer.py` | **"Manos"**: `SiteAnalyzer` recoge datos reales del sitio (status, headers de seguridad, formularios, accesibilidad, mixed-content) + guard anti-SSRF. | `requests` + `beautifulsoup4`. |
-| `ai_analyst.py` | **"Cerebro"**: `AIAnalyst` envía los datos a un LLM de NVIDIA y devuelve los bugs en JSON (parseo defensivo). | Cliente `openai` apuntando a NVIDIA NIM. |
+| `agent.py` | **Agente**: `ToolExecutor` expone las manos como tools; `TestAgent` corre el loop de tool-calling donde el LLM decide qué investigar. Devuelve `{bugs, test_cases}`. | Tools fijadas al host + SSRF. |
+| `ai_analyst.py` | **Fallback + utilidades**: `AIAnalyst` (análisis single-shot sin tools) y el parseo/normalización compartidos (`parse_findings`, `normalize_bug`, `normalize_test_case`). | Cliente `openai` apuntando a NVIDIA NIM. |
 | `istqb_report_generator.py` | Clase `ISTQBBugReport`: normaliza un bug al esquema ISTQB (severidad→prioridad, entorno, pasos, adjuntos…). | Modelo de datos de defectos. |
 | `pdf_generator.py` | Clase `PDFReportGenerator`: arma el PDF con `reportlab` (portada, resumen, tabla por bug). | Estilo de marca Greensoft (`#00ff99`). |
 | `templates/index.html` | Dashboard de una sola página. | Servida por la ruta `/`. |
@@ -278,15 +279,27 @@ services:
 
 ## Integración con el LLM (NVIDIA NIM)
 
-`AIAnalyst` (`ai_analyst.py`) usa el SDK `openai` apuntando al endpoint compatible de NVIDIA:
+Ambos modos usan el SDK `openai` apuntando al endpoint compatible de NVIDIA:
 
 - **base_url:** `https://integrate.api.nvidia.com/v1`
 - **modelo por defecto:** `z-ai/glm-5.1` (configurable con `NVIDIA_MODEL`)
-- **prompt:** un *system prompt* que fija el rol de QA senior y exige salida en array JSON; el *user prompt* contiene los hechos de `SiteAnalyzer` serializados.
-- **parseo defensivo:** `_extract_json_array()` intenta (1) `json.loads` directo, (2) bloque dentro de ``` ```json ```, (3) del primer `[` al último `]`. Si todo falla, lanza y el `TestRunner` hace fallback.
-- **normalización:** `_normalize_bug()` valida la severidad y añade el campo `type` (compat con el reporte JSON).
+- **salida:** objeto JSON `{bugs, test_cases}` (contrato en `OUTPUT_CONTRACT`).
+- **parseo defensivo:** `parse_findings()` → `_extract_json_object()` intenta (1) `json.loads` directo, (2) bloque ``` ```json ```, (3) del primer `{` al último `}`. Si falla, lanza y se cae al siguiente nivel de fallback.
+- **normalización:** `normalize_bug()` y `normalize_test_case()` validan severidad/status y añaden campos de compatibilidad.
 
-> Razones de diseño: se eligió un modelo *instruct/agéntico* (no *reasoning* ni *omni*) para obtener JSON limpio; el parseo defensivo cubre los casos en que el modelo igual envuelve la respuesta en texto.
+### Modo agente (`TestAgent`, principal)
+
+Loop de tool-calling: se envían `TOOL_SCHEMAS` al modelo; mientras devuelva `tool_calls`, `ToolExecutor` las ejecuta y se devuelven los resultados como mensajes `role: tool`; cuando el modelo responde sin tools, esa respuesta es el reporte final.
+
+- **Tools:** `get_overview`, `get_security_headers`, `get_forms`, `get_page_meta` (leen los hechos ya recogidos), `discover_endpoints` y `fetch_path` (hacen fetch nuevo).
+- **Seguridad:** `ToolExecutor._same_host_url()` fija toda petición al host original y aplica el guard anti-SSRF. Un LLM eligiendo URLs es un vector SSRF nuevo; aquí se cierra.
+- **Rate limit (40 rpm):** `MAX_ITERATIONS = 6`; al alcanzarlo se fuerza una última llamada **sin tools** que sintetiza el reporte (garantiza terminación).
+
+### Cadena de fallback
+
+`TestRunner._run_ai()`: **agente** (tool-calling) → **single-shot** (`AIAnalyst.analyze`, 1 llamada) → **simulado** (datos de ejemplo). Cada salto se registra en los logs. Así un fallo de tool-calling, un 429 o la ausencia de key nunca rompen la demo.
+
+> Razones de diseño: modelo *instruct/agéntico* (no *reasoning* ni *omni*) para JSON limpio; el parseo defensivo cubre respuestas envueltas en texto.
 
 ## Puntos de extensión
 
@@ -302,8 +315,7 @@ services:
 ## Limitaciones conocidas
 
 1. **Análisis estático (sin navegador)** — `analyzer.py` usa `requests`, no ejecuta JS; sitios SPA pesados se ven parcialmente. Selenium/Playwright está en el roadmap.
-2. **Una sola llamada al LLM por sesión** — no es un loop agéntico con tool-calling (todavía).
-3. **Estado volátil** — todo vive en memoria; un reinicio borra sesiones y reportes.
+2. **Estado volátil** — todo vive en memoria; un reinicio borra sesiones y reportes. Persistencia (Postgres) en el roadmap.
 4. **Un solo worker** — no escala horizontalmente hasta externalizar el estado.
 5. **Sin autenticación** — cualquiera con la URL puede lanzar tests; el guard anti-SSRF mitiga el abuso de red, pero no exponer sin proteger.
 6. **PDF vía archivo temporal** — funciona, pero conviene migrar a buffer en memoria.

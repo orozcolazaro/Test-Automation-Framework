@@ -43,12 +43,13 @@ Está pensado como base para un asistente de QA: define el *flujo* completo (orq
 
 | Componente | Estado |
 |---|---|
-| Interfaz web, API REST, monitoreo en vivo, descarga de PDF | ✅ **Real y funcional** |
+| Interfaz web, API REST, monitoreo en vivo, descarga de PDF/HTML | ✅ **Real y funcional** |
 | Generación de reportes ISTQB (JSON + PDF con `reportlab`) | ✅ **Real y funcional** |
 | **Recolección de datos del sitio** (`analyzer.py`) | ✅ **Real** — status, headers de seguridad, formularios, accesibilidad, mixed-content + guard anti-SSRF |
-| **Análisis con IA** (`ai_analyst.py` → NVIDIA NIM) | ✅ **Real** — un LLM razona sobre los datos como QA senior y genera los bugs |
-| Bugs devueltos por `/api/test-report` y el PDF | ✅ **Reales** (con fallback a datos de ejemplo si no hay API key) |
-| Integración con JIRA, navegador real (Selenium/Playwright) | 🔴 **No implementado** (en el [roadmap](#-roadmap)) |
+| **Agente autónomo con tool-calling** (`agent.py` → NVIDIA NIM) | ✅ **Real** — el LLM decide qué herramientas usar en un loop y razona como QA senior |
+| **Casos de prueba** generados por IA (`TC_001`, pasos, esperado, status) | ✅ **Reales** — en JSON, PDF y dashboard |
+| Bugs y casos en `/api/test-report`, PDF y HTML | ✅ **Reales** (con fallback a datos de ejemplo si no hay API key) |
+| Integración con JIRA, navegador real (Selenium/Playwright), persistencia | 🔴 **No implementado** (en el [roadmap](#-roadmap)) |
 
 > 🧠 **Sin `NVIDIA_API_KEY` configurada, la app funciona igual en modo demo** (usa bugs de ejemplo), así que el despliegue nunca se rompe. Con la key activa, el análisis es real e inteligente.
 
@@ -56,8 +57,9 @@ Está pensado como base para un asistente de QA: define el *flujo* completo (orq
 
 ## ✨ Características
 
-- 🧠 **Análisis agéntico con IA**: un LLM (vía NVIDIA NIM) razona sobre los datos reales del sitio como un QA senior y genera los defectos.
-- 🛡️ **Recolección real + guard anti-SSRF**: inspecciona headers de seguridad, formularios, accesibilidad y mixed-content; bloquea URLs internas.
+- 🤖 **Agente autónomo (tool-calling)**: el LLM (vía NVIDIA NIM) decide qué herramientas usar en un loop —headers, formularios, accesibilidad, descubrimiento de endpoints— y razona como QA senior.
+- 🧪 **Casos de prueba generados por IA**: además de bugs, produce un plan de pruebas (`TC_001`: pasos, esperado, status, severidad).
+- 🛡️ **Recolección real + guard anti-SSRF**: inspecciona headers de seguridad, formularios, accesibilidad y mixed-content; bloquea URLs internas (incluso en redirects y en las rutas que elige el agente).
 - 🎨 **Dashboard de una sola página** (HTML/CSS/JS, sin frameworks pesados).
 - ⚡ **Ejecución asíncrona**: cada test corre en un hilo en segundo plano; la UI hace *polling* de estado y logs.
 - 📊 **8 áreas de testing** declaradas: UI, Lógica, Performance, Seguridad, API, Integridad de Datos, Manejo de Estado y Edge Cases.
@@ -145,19 +147,22 @@ gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
 
 ---
 
-## 🧠 Análisis con IA (NVIDIA)
+## 🤖 Agente autónomo con IA (NVIDIA)
 
-El salto agéntico del framework. El flujo separa **"manos"** y **"cerebro"**:
+El corazón del framework. El flujo separa **"manos"** y **"cerebro"**:
 
 ```
-analyzer.py (manos)            ai_analyst.py (cerebro)
-recoge datos REALES   ───────► LLM de NVIDIA razona como
-del sitio objetivo             QA senior y devuelve bugs (JSON)
+analyzer.py (manos)            agent.py (cerebro agéntico)
+expone herramientas   ◄──────► el LLM DECIDE qué tools usar
+sobre el sitio        ──────►  en un loop y devuelve bugs +
+                               casos de prueba (JSON)
 ```
 
-1. **`analyzer.py`** hace fetch de la URL y extrae hechos verificables: status HTTP, tiempo de respuesta, **headers de seguridad** (CSP, HSTS, X-Frame-Options…), formularios, imágenes sin `alt`, mixed-content, viewport, `lang`. Incluye un **guard anti-SSRF** que bloquea IPs privadas/loopback/metadata.
-2. **`ai_analyst.py`** envía esos hechos a un LLM (endpoint compatible con OpenAI de NVIDIA NIM) que los analiza y devuelve una lista de defectos clasificados por severidad. El parseo del JSON es **defensivo** (tolera respuestas envueltas en texto/razonamiento).
-3. Si la IA no está disponible o falla, el sistema hace **fallback** a datos de ejemplo: la demo nunca se rompe.
+1. **`analyzer.py`** hace fetch de la URL y extrae hechos verificables: status HTTP, **headers de seguridad** (CSP, HSTS, X-Frame-Options…), formularios, accesibilidad, mixed-content. Incluye un **guard anti-SSRF** que bloquea IPs privadas/loopback/metadata (y revalida cada redirección).
+2. **`agent.py`** corre un **loop de tool-calling**: el LLM elige qué investigar usando herramientas (`get_security_headers`, `get_forms`, `get_page_meta`, `discover_endpoints`, `fetch_path`) hasta tener evidencia suficiente, y produce `{bugs, test_cases}`. Toda tool que hace fetch pasa por el guard anti-SSRF y queda **fijada al host original**.
+3. **`ai_analyst.py`** es el **fallback** de una sola llamada (sin tools) si el agente falla o se topa con el rate limit; y aporta el parseo defensivo del JSON. Si no hay API key, se usan datos de ejemplo: la demo nunca se rompe.
+
+**Cadena de resiliencia:** agente (tool-calling) → análisis simple (1 llamada) → datos de ejemplo.
 
 **Configuración** (variables de entorno / `.env`):
 
@@ -197,8 +202,9 @@ Base URL: `http://localhost:5000` (o tu dominio de Render).
 | `POST` | `/api/start-test` | Inicia una sesión. Body: `{ "target_url": "...", "mode": "quick\|standard\|deep" }`. Devuelve `{ "session_id": "..." }`. |
 | `GET`  | `/api/test-status/<session_id>` | Estado y progreso de la sesión. |
 | `GET`  | `/api/test-logs/<session_id>?offset=N` | Logs de la sesión desde `offset`. |
-| `GET`  | `/api/test-report/<session_id>` | Reporte de defectos en JSON. |
-| `GET`  | `/api/test-report-pdf/<session_id>` | Descarga el reporte en PDF (ISTQB). |
+| `GET`  | `/api/test-report/<session_id>` | Reporte en JSON: `bugs`, `test_cases`, conteos y recomendación. |
+| `GET`  | `/api/test-report-pdf/<session_id>` | Descarga el reporte en PDF (ISTQB, con casos de prueba). |
+| `GET`  | `/api/test-report-istqb/<session_id>` | Reporte ISTQB en HTML. |
 | `GET`  | `/api/features` | Lista las 8 áreas de testing. |
 | `POST` | `/api/cancel-test/<session_id>` | Marca la sesión como cancelada. |
 | `POST` | `/api/clear-history` | Limpia todas las sesiones y logs en memoria. |
@@ -221,7 +227,8 @@ La especificación detallada (request/response, códigos de error) está en [`do
 Test-Automation-Framework/
 ├── app.py                      # Servidor Flask + API + TestRunner (orquestación)
 ├── analyzer.py                 # "Manos": recoge datos del sitio + guard anti-SSRF
-├── ai_analyst.py               # "Cerebro": analiza los datos con un LLM de NVIDIA
+├── agent.py                    # Agente: loop de tool-calling (el LLM decide)
+├── ai_analyst.py               # Fallback single-shot + parseo/normalización
 ├── istqb_report_generator.py   # Modelo de defectos en formato ISTQB
 ├── pdf_generator.py            # Exporta el reporte a PDF (reportlab)
 ├── monitor.py                  # CLI: monitoreo de una sesión en vivo
@@ -256,13 +263,14 @@ La documentación técnica completa (arquitectura, modelo de concurrencia, flujo
 
 - [x] **Análisis real con IA** (NVIDIA NIM) sobre datos recogidos del sitio.
 - [x] Recolección real: headers de seguridad, formularios, accesibilidad, mixed-content.
-- [x] Guard anti-SSRF.
-- [ ] **Tool-calling agéntico**: que el LLM decida qué pruebas ejecutar en un loop autónomo.
+- [x] Guard anti-SSRF (incluye redirects y rutas que elige el agente).
+- [x] **Tool-calling agéntico**: el LLM decide qué investigar en un loop autónomo.
+- [x] **Generación de casos de prueba** por IA (ISTQB) + export HTML.
+- [ ] Persistir sesiones y reportes (Postgres) con vista de historial.
 - [ ] Navegador real (Selenium / Playwright) para sitios con JS pesado y pruebas de UI.
 - [ ] Pruebas activas de seguridad (SQLi, XSS) — con autorización del objetivo.
-- [ ] Persistir sesiones y reportes (SQLite / Redis) para que sobrevivan a reinicios.
 - [ ] Integración real con JIRA (creación automática de issues).
-- [ ] Exportar reportes también en HTML y CSV.
+- [ ] Exportar reportes también en CSV.
 - [ ] Autenticación de usuarios y multi-proyecto.
 
 ---
