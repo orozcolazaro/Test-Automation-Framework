@@ -636,3 +636,62 @@ main {
 
 .tc-expected { font-size: 13px; color: rgba(255, 255, 255, 0.8); }
 .tc-expected strong { color: var(--greensoft-cyan); }
+
+/* Historial */
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.history-item {
+    background: rgba(0, 255, 170, 0.05);
+    border: 1px solid rgba(0, 255, 170, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.history-item:hover {
+    background: rgba(0, 255, 170, 0.12);
+    border-color: var(--greensoft-cyan);
+}
+
+.hist-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.hist-url {
+    color: var(--white);
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.hist-mode {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--greensoft-dark);
+    background: var(--greensoft-cyan);
+    padding: 3px 8px;
+    border-radius: 10px;
+    margin-left: 10px;
+    white-space: nowrap;
+}
+
+.hist-meta {
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    flex-wrap: wrap;
+}
+
+.hist-meta .critical { color: var(--critical); }
+.hist-meta .high { color: var(--high); }
+.hist-meta .medium { color: var(--medium); }
+.hist-meta .low { color: var(--low); }
+.hist-date { margin-left: auto; color: rgba(255, 255, 255, 0.5); }

@@ -15,13 +15,22 @@ from dotenv import load_dotenv
 from analyzer import SiteAnalyzer, SSRFError
 from ai_analyst import AIAnalyst
 from agent import TestAgent
+import storage
 
-# Carga NVIDIA_API_KEY / NVIDIA_MODEL desde .env en local (en Render se usan
-# las env vars del dashboard; si no hay .env, load_dotenv() no hace nada).
+# Carga NVIDIA_API_KEY / NVIDIA_MODEL / DATABASE_URL desde .env en local (en
+# Render se usan las env vars del dashboard; si no hay .env, no hace nada).
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# Inicializa la tabla de sesiones si hay base de datos configurada.
+if storage.enabled():
+    try:
+        storage.init_db()
+        print("🗄️  Persistencia activada (Postgres)")
+    except Exception as e:
+        print(f"⚠️  No se pudo inicializar la DB: {e}")
 
 test_sessions: Dict = {}
 test_logs: Dict = {}
@@ -55,6 +64,25 @@ def _summarize_bugs(bugs):
     else:
         rec = "OK - Sin bloqueantes"
     return by_sev, rec
+
+
+def _load_session(session_id):
+    """Sesión desde memoria; si no está, desde la DB (sobrevive reinicios)."""
+    if session_id in test_sessions:
+        return test_sessions[session_id]
+    if storage.enabled():
+        try:
+            return storage.get_session(session_id)
+        except Exception:
+            return None
+    return None
+
+
+def _session_logs(session_id, session):
+    """Logs desde memoria o desde la sesión cargada de la DB."""
+    if session_id in test_logs:
+        return test_logs[session_id]
+    return (session or {}).get("logs", [])
 
 
 class TestRunner:
@@ -155,13 +183,21 @@ class TestRunner:
         self.bugs = self._simulated_bugs()
 
     def _finish(self, status: str):
-        """Persiste bugs, casos de prueba y estado final en la sesión."""
+        """Persiste bugs, casos de prueba y estado final en la sesión (memoria + DB)."""
         self.status = status
         self.update_progress(100, "Completado" if status == "completed" else "Error")
-        if self.session_id in test_sessions:
-            test_sessions[self.session_id]["status"] = status
-            test_sessions[self.session_id]["bugs"] = self.bugs
-            test_sessions[self.session_id]["test_cases"] = self.test_cases
+        if self.session_id not in test_sessions:
+            return
+        test_sessions[self.session_id]["status"] = status
+        test_sessions[self.session_id]["bugs"] = self.bugs
+        test_sessions[self.session_id]["test_cases"] = self.test_cases
+
+        if storage.enabled():
+            try:
+                by_sev, _ = _summarize_bugs(self.bugs)
+                storage.save_session(test_sessions[self.session_id], self.logs, by_sev)
+            except Exception as e:
+                self.add_log(f"⚠ No se pudo guardar en la DB: {e}", "ERROR")
 
     def _simulated_bugs(self):
         """Datos de respaldo cuando no hay IA disponible (mantiene viva la demo)."""
@@ -238,10 +274,10 @@ def test_logs_endpoint(session_id):
 
 @app.route('/api/test-report/<session_id>')
 def test_report(session_id):
-    if session_id not in test_sessions:
+    session = _load_session(session_id)
+    if not session:
         return jsonify({"error": "No encontrado"}), 404
-    
-    session = test_sessions[session_id]
+
     bugs = session.get("bugs", [])
     test_cases = session.get("test_cases", [])
     by_sev, recommendation = _summarize_bugs(bugs)
@@ -263,15 +299,14 @@ def test_report(session_id):
 @app.route('/api/test-report-pdf/<session_id>')
 def test_report_pdf(session_id):
     try:
-        if session_id not in test_sessions:
+        session = _load_session(session_id)
+        if not session:
             return jsonify({"error": "Sesión no encontrada"}), 404
-        
-        session = test_sessions[session_id]
 
         # Bugs, casos de prueba y logs reales detectados en la sesión
         bugs = session.get("bugs", [])
         test_cases = session.get("test_cases", [])
-        logs = test_logs.get(session_id, [])
+        logs = _session_logs(session_id, session)
 
         # Generar PDF
         pdf_gen = PDFReportGenerator()
@@ -307,10 +342,10 @@ def test_report_pdf(session_id):
 @app.route('/api/test-report-istqb/<session_id>')
 def test_report_istqb(session_id):
     """Reporte HTML en formato ISTQB con los bugs reales de la sesión."""
-    if session_id not in test_sessions:
+    session = _load_session(session_id)
+    if not session:
         return jsonify({"error": "No encontrado"}), 404
 
-    session = test_sessions[session_id]
     report = ISTQBBugReport()
     for i, b in enumerate(session.get("bugs", []), 1):
         report.add_bug({
@@ -324,7 +359,7 @@ def test_report_istqb(session_id):
             "steps": b.get("steps", []),
             "services": b.get("services", []),
         })
-    logs = test_logs.get(session_id, [])
+    logs = _session_logs(session_id, session)
     html = report.generate_html_report(session_id, session["target_url"], session["mode"], logs)
     return app.response_class(html, mimetype="text/html")
 
@@ -350,10 +385,26 @@ def cancel_test(session_id):
     return jsonify({"status": "ok"})
 
 
+@app.route('/api/history')
+def history():
+    """Historial de sesiones (desde la DB si está activa)."""
+    if not storage.enabled():
+        return jsonify({"enabled": False, "sessions": []})
+    try:
+        return jsonify({"enabled": True, "sessions": storage.list_sessions()})
+    except Exception as e:
+        return jsonify({"enabled": True, "sessions": [], "error": str(e)})
+
+
 @app.route('/api/clear-history', methods=['POST'])
 def clear_history():
     test_sessions.clear()
     test_logs.clear()
+    if storage.enabled():
+        try:
+            storage.clear()
+        except Exception:
+            pass
     return jsonify({"status": "ok"})
 
 

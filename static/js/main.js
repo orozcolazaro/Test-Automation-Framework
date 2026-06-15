@@ -13,6 +13,7 @@ const featuresContainer = document.getElementById('features-container');
 
 document.addEventListener('DOMContentLoaded', () => {
     loadFeatures();
+    loadHistory();
     setupEventListeners();
 });
 
@@ -30,6 +31,56 @@ function loadFeatures() {
                     ${f.icon} ${f.name}
                 </div>
             `).join('');
+        });
+}
+
+function loadHistory() {
+    fetch('/api/history')
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('history-list');
+            if (!el) return;
+            if (!data.enabled) {
+                el.innerHTML = '<p class="log-placeholder">Historial deshabilitado (configura DATABASE_URL para activarlo).</p>';
+                return;
+            }
+            if (!data.sessions.length) {
+                el.innerHTML = '<p class="log-placeholder">Aún no hay sesiones guardadas.</p>';
+                return;
+            }
+            el.innerHTML = data.sessions.map(s => {
+                const sev = s.bugs_by_severity || {};
+                const date = s.created_at ? new Date(s.created_at).toLocaleString() : '';
+                return `
+                <div class="history-item" onclick="viewSession('${s.session_id}')">
+                    <div class="hist-main">
+                        <span class="hist-url">${s.target_url || ''}</span>
+                        <span class="hist-mode">${(s.mode || '').toUpperCase()}</span>
+                    </div>
+                    <div class="hist-meta">
+                        <span>🐛 ${s.total_bugs}</span>
+                        <span class="critical">C:${sev.CRITICAL || 0}</span>
+                        <span class="high">H:${sev.HIGH || 0}</span>
+                        <span class="medium">M:${sev.MEDIUM || 0}</span>
+                        <span class="low">L:${sev.LOW || 0}</span>
+                        <span class="hist-date">${date}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        })
+        .catch(() => {});
+}
+
+function viewSession(sessionId) {
+    currentSessionId = sessionId;
+    fetch(`/api/test-report/${sessionId}`)
+        .then(r => r.json())
+        .then(data => {
+            displayResults(data);
+            progressSection.style.display = 'none';
+            initialState.style.display = 'none';
+            resultsSection.style.display = 'block';
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
         });
 }
 
@@ -83,6 +134,7 @@ function pollTestStatus() {
                 setTimeout(() => {
                     loadResults();
                     resetUI();
+                    loadHistory();
                 }, 500);
             }
         });
