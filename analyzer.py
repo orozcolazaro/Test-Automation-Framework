@@ -27,6 +27,7 @@ SECURITY_HEADERS = [
 ]
 
 REQUEST_TIMEOUT = 10
+MAX_REDIRECTS = 5
 USER_AGENT = "GREENSOFT-Testing-Framework/1.0 (+https://github.com/orozcolazaro/Test-Automation-Framework)"
 
 
@@ -65,17 +66,34 @@ def _assert_safe_url(url: str) -> None:
 class SiteAnalyzer:
     """Recoge hechos verificables sobre una URL objetivo."""
 
+    def _safe_get(self, url: str):
+        """GET que valida (anti-SSRF) la URL inicial Y cada redirección.
+
+        No usamos allow_redirects=True porque requests seguiría un redirect a
+        una IP interna sin revalidarla. Seguimos los saltos manualmente.
+        """
+        current = url
+        for _ in range(MAX_REDIRECTS + 1):
+            _assert_safe_url(current)
+            resp = requests.get(
+                current,
+                timeout=REQUEST_TIMEOUT,
+                headers={"User-Agent": USER_AGENT},
+                allow_redirects=False,
+            )
+            if resp.is_redirect or resp.is_permanent_redirect:
+                location = resp.headers.get("Location")
+                if not location:
+                    return resp
+                current = urljoin(current, location)  # resuelve redirects relativos
+                continue
+            return resp
+        raise SSRFError(f"Demasiadas redirecciones (>{MAX_REDIRECTS}).")
+
     def collect(self, url: str) -> dict:
         """Devuelve un dict de 'hechos' sobre el sitio. Lanza SSRFError si la URL es interna."""
-        _assert_safe_url(url)
-
         started = time.perf_counter()
-        resp = requests.get(
-            url,
-            timeout=REQUEST_TIMEOUT,
-            headers={"User-Agent": USER_AGENT},
-            allow_redirects=True,
-        )
+        resp = self._safe_get(url)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         facts = {
