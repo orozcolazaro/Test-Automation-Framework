@@ -65,6 +65,7 @@ graph TD
 | `analyzer.py` | **"Manos"**: `SiteAnalyzer` recoge datos reales del sitio (status, headers de seguridad, formularios, accesibilidad, mixed-content) + guard anti-SSRF. | `requests` + `beautifulsoup4`. |
 | `agent.py` | **Agente**: `ToolExecutor` expone las manos como tools; `TestAgent` corre el loop de tool-calling donde el LLM decide qué investigar. Devuelve `{bugs, test_cases}`. | Tools fijadas al host + SSRF. |
 | `ai_analyst.py` | **Fallback + utilidades**: `AIAnalyst` (análisis single-shot sin tools) y el parseo/normalización compartidos (`parse_findings`, `normalize_bug`, `normalize_test_case`). | Cliente `openai` apuntando a NVIDIA NIM. |
+| `storage.py` | **Persistencia**: guarda/lee sesiones en Postgres; degrada a solo-memoria si no hay `DATABASE_URL`. | `psycopg` v3. |
 | `istqb_report_generator.py` | Clase `ISTQBBugReport`: normaliza un bug al esquema ISTQB (severidad→prioridad, entorno, pasos, adjuntos…). | Modelo de datos de defectos. |
 | `pdf_generator.py` | Clase `PDFReportGenerator`: arma el PDF con `reportlab` (portada, resumen, tabla por bug). | Estilo de marca Greensoft (`#00ff99`). |
 | `templates/index.html` | Dashboard de una sola página. | Servida por la ruta `/`. |
@@ -256,6 +257,18 @@ Estas herramientas son la base natural para integrar el framework en **CI** (por
 
 ---
 
+## Persistencia (`storage.py`)
+
+Las sesiones viven en memoria durante la ejecución (para el *polling* en vivo) y, al finalizar (`TestRunner._finish`), se **persisten en Postgres** si `DATABASE_URL` está configurado.
+
+- **Degradación grácil:** `storage.enabled()` es `False` sin `DATABASE_URL` → la app funciona solo en memoria (sin historial), nunca se rompe.
+- **Lectura perezosa del URL:** `storage` lee `DATABASE_URL` en cada uso (no al importar), porque el import ocurre antes de `load_dotenv()`.
+- **Tabla `sessions`:** `session_id` (PK), `target_url`, `mode`, `status`, `total_bugs`, `bugs`/`test_cases`/`logs`/`bugs_by_severity` (JSONB), `created_at`. El guardado es un *upsert* (`ON CONFLICT`).
+- **Recuperación tras reinicio:** los endpoints de reporte usan `_load_session()` → memoria primero, luego la DB. Así un reporte (JSON/PDF/HTML) sigue disponible aunque el proceso se haya reiniciado.
+- **Endpoints:** `GET /api/history` (resumen de sesiones), `POST /api/clear-history` (limpia memoria y DB).
+
+> Recomendado un Postgres externo (Neon/Supabase) en producción: el disco de Render free es efímero, así que SQLite local no persistiría en la demo.
+
 ## Despliegue
 
 Definido como código en [`render.yaml`](../render.yaml):
@@ -272,6 +285,7 @@ services:
 
 - El puerto se lee de la variable de entorno `PORT` (inyectada por Render) tanto en `app.run` (desarrollo) como vía `--bind` en gunicorn (producción).
 - **IA:** se activa con la env var `NVIDIA_API_KEY` (y opcionalmente `NVIDIA_MODEL`) en el dashboard de Render. Sin ella, modo demo.
+- **Historial:** se activa con `DATABASE_URL` (Postgres). Sin ella, solo-memoria.
 - Redeploy automático en cada push a la rama por defecto.
 - **Plan free:** el servicio se suspende tras ~15 min sin tráfico (arranque en frío al volver) y, al reiniciarse, **se pierde el estado en memoria**.
 
@@ -315,7 +329,7 @@ Loop de tool-calling: se envían `TOOL_SCHEMAS` al modelo; mientras devuelva `to
 ## Limitaciones conocidas
 
 1. **Análisis estático (sin navegador)** — `analyzer.py` usa `requests`, no ejecuta JS; sitios SPA pesados se ven parcialmente. Selenium/Playwright está en el roadmap.
-2. **Estado volátil** — todo vive en memoria; un reinicio borra sesiones y reportes. Persistencia (Postgres) en el roadmap.
+2. **Sesión en vivo en memoria** — el progreso/logs de una sesión en curso viven en memoria; los resultados finales sí se persisten en Postgres (si está configurado) y sobreviven reinicios.
 4. **Un solo worker** — no escala horizontalmente hasta externalizar el estado.
 5. **Sin autenticación** — cualquiera con la URL puede lanzar tests; el guard anti-SSRF mitiga el abuso de red, pero no exponer sin proteger.
 6. **PDF vía archivo temporal** — funciona, pero conviene migrar a buffer en memoria.

@@ -49,7 +49,8 @@ Está pensado como base para un asistente de QA: define el *flujo* completo (orq
 | **Agente autónomo con tool-calling** (`agent.py` → NVIDIA NIM) | ✅ **Real** — el LLM decide qué herramientas usar en un loop y razona como QA senior |
 | **Casos de prueba** generados por IA (`TC_001`, pasos, esperado, status) | ✅ **Reales** — en JSON, PDF y dashboard |
 | Bugs y casos en `/api/test-report`, PDF y HTML | ✅ **Reales** (con fallback a datos de ejemplo si no hay API key) |
-| Integración con JIRA, navegador real (Selenium/Playwright), persistencia | 🔴 **No implementado** (en el [roadmap](#-roadmap)) |
+| **Persistencia + historial** (Postgres) | ✅ **Real** — las sesiones sobreviven reinicios y se ven en un historial (degrada a solo-memoria sin DB) |
+| Integración con JIRA, navegador real (Selenium/Playwright), screenshots | 🔴 **No implementado** (en el [roadmap](#-roadmap)) |
 
 > 🧠 **Sin `NVIDIA_API_KEY` configurada, la app funciona igual en modo demo** (usa bugs de ejemplo), así que el despliegue nunca se rompe. Con la key activa, el análisis es real e inteligente.
 
@@ -59,6 +60,7 @@ Está pensado como base para un asistente de QA: define el *flujo* completo (orq
 
 - 🤖 **Agente autónomo (tool-calling)**: el LLM (vía NVIDIA NIM) decide qué herramientas usar en un loop —headers, formularios, accesibilidad, descubrimiento de endpoints— y razona como QA senior.
 - 🧪 **Casos de prueba generados por IA**: además de bugs, produce un plan de pruebas (`TC_001`: pasos, esperado, status, severidad).
+- 🗂️ **Persistencia + historial**: las sesiones se guardan en Postgres y se consultan desde un historial; los reportes sobreviven a reinicios.
 - 🛡️ **Recolección real + guard anti-SSRF**: inspecciona headers de seguridad, formularios, accesibilidad y mixed-content; bloquea URLs internas (incluso en redirects y en las rutas que elige el agente).
 - 🎨 **Dashboard de una sola página** (HTML/CSS/JS, sin frameworks pesados).
 - ⚡ **Ejecución asíncrona**: cada test corre en un hilo en segundo plano; la UI hace *polling* de estado y logs.
@@ -129,9 +131,10 @@ El repo incluye un `render.yaml` (Blueprint), así que el despliegue es práctic
 2. **New +** → **Blueprint**.
 3. Conecta este repositorio. Render detectará `render.yaml`.
 4. Pulsa **Apply** y espera el primer build (~2–3 min).
-5. **Para activar la IA:** en el servicio → **Environment** → añade la variable
-   `NVIDIA_API_KEY` con tu key (márcala como *secret*). Opcionalmente `NVIDIA_MODEL`.
-   Sin esta variable, el servicio corre en modo demo (no se rompe).
+5. **Para activar la IA y el historial:** en el servicio → **Environment** → añade:
+   - `NVIDIA_API_KEY` (márcala como *secret*) — y opcionalmente `NVIDIA_MODEL`.
+   - `DATABASE_URL` (secret) — para el historial persistente.
+   Sin estas variables, el servicio corre en modo demo / solo-memoria (no se rompe).
 
 Cada `git push` a la rama por defecto dispara un **redeploy automático**.
 
@@ -170,8 +173,9 @@ sobre el sitio        ──────►  en un loop y devuelve bugs +
 |---|---|---|---|
 | `NVIDIA_API_KEY` | Para la IA | — | Tu key de build.nvidia.com (`nvapi-...`). |
 | `NVIDIA_MODEL` | No | `z-ai/glm-5.1` | Modelo a usar. Alternativas: `meta/llama-3.3-70b-instruct`, `nvidia/nemotron-3-nano-30b-a3b`. |
+| `DATABASE_URL` | Para historial | — | Connection string de Postgres (Neon/Supabase). Sin esto, la app corre solo en memoria. |
 
-> 🔒 El `.env` está en `.gitignore`: la key **nunca** se sube al repo.
+> 🔒 El `.env` está en `.gitignore`: la key y el `DATABASE_URL` **nunca** se suben al repo.
 
 ---
 
@@ -205,6 +209,7 @@ Base URL: `http://localhost:5000` (o tu dominio de Render).
 | `GET`  | `/api/test-report/<session_id>` | Reporte en JSON: `bugs`, `test_cases`, conteos y recomendación. |
 | `GET`  | `/api/test-report-pdf/<session_id>` | Descarga el reporte en PDF (ISTQB, con casos de prueba). |
 | `GET`  | `/api/test-report-istqb/<session_id>` | Reporte ISTQB en HTML. |
+| `GET`  | `/api/history` | Historial de sesiones guardadas (si hay DB). |
 | `GET`  | `/api/features` | Lista las 8 áreas de testing. |
 | `POST` | `/api/cancel-test/<session_id>` | Marca la sesión como cancelada. |
 | `POST` | `/api/clear-history` | Limpia todas las sesiones y logs en memoria. |
@@ -229,6 +234,7 @@ Test-Automation-Framework/
 ├── analyzer.py                 # "Manos": recoge datos del sitio + guard anti-SSRF
 ├── agent.py                    # Agente: loop de tool-calling (el LLM decide)
 ├── ai_analyst.py               # Fallback single-shot + parseo/normalización
+├── storage.py                  # Persistencia de sesiones en Postgres
 ├── istqb_report_generator.py   # Modelo de defectos en formato ISTQB
 ├── pdf_generator.py            # Exporta el reporte a PDF (reportlab)
 ├── monitor.py                  # CLI: monitoreo de una sesión en vivo
@@ -266,8 +272,8 @@ La documentación técnica completa (arquitectura, modelo de concurrencia, flujo
 - [x] Guard anti-SSRF (incluye redirects y rutas que elige el agente).
 - [x] **Tool-calling agéntico**: el LLM decide qué investigar en un loop autónomo.
 - [x] **Generación de casos de prueba** por IA (ISTQB) + export HTML.
-- [ ] Persistir sesiones y reportes (Postgres) con vista de historial.
-- [ ] Navegador real (Selenium / Playwright) para sitios con JS pesado y pruebas de UI.
+- [x] **Persistencia en Postgres** + vista de historial (sobrevive reinicios).
+- [ ] Navegador real (Selenium / Playwright) para sitios con JS pesado, pruebas de UI y **screenshots**.
 - [ ] Pruebas activas de seguridad (SQLi, XSS) — con autorización del objetivo.
 - [ ] Integración real con JIRA (creación automática de issues).
 - [ ] Exportar reportes también en CSV.
