@@ -18,25 +18,24 @@ class ISTQBBugReport:
             "title": bug_data.get("title", ""),
             "summary": bug_data.get("description", ""),
             "environment": {
-                "browser": "Chrome 120",
-                "os": "Windows 10",
-                "test_data": "Production-like data",
-                "network": "Normal"
+                "browser": "N/A — análisis vía HTTP (sin navegador)",
+                "os": "Servidor del framework (Linux/local)",
+                "test_data": "URL de producción real",
+                "network": "Internet"
             },
             "severity": bug_data.get("severity", "MEDIUM"),
             "priority": self._map_priority(bug_data.get("severity")),
             "type": bug_data.get("type", "Functional"),
             "status": "NEW",
-            "steps_to_reproduce": [
-                "1. Navegar a la URL",
-                "2. Ejecutar acción",
-                "3. Observar resultado"
+            "steps_to_reproduce": bug_data.get("steps") or [
+                "1. Navegar a la URL objetivo",
+                "2. Inspeccionar el aspecto reportado",
+                "3. Observar la diferencia con el resultado esperado"
             ],
             "expected_result": bug_data.get("expected", "Debe funcionar correctamente"),
             "actual_result": bug_data.get("actual", "Error encontrado"),
             "attachments": [
-                {"type": "screenshot", "name": f"screenshot_{bug_data.get('id', 'bug')}.png"},
-                {"type": "logs", "name": f"logs_{bug_data.get('id', 'bug')}.txt"}
+                {"type": "screenshot", "name": "Pendiente — requiere navegador (roadmap)"}
             ],
             "services_affected": bug_data.get("services", []),
             "root_cause": "",
@@ -63,8 +62,9 @@ class ISTQBBugReport:
         }
         return mapping.get(severity, "P3 - NORMAL")
     
-    def generate_html_report(self, session_id: str, target_url: str, mode: str) -> str:
+    def generate_html_report(self, session_id: str, target_url: str, mode: str, logs: list = None) -> str:
         """Genera reporte HTML en formato ISTQB"""
+        logs = logs or []
         
         html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -331,6 +331,17 @@ class ISTQBBugReport:
         </div>
 """
         
+        # Logs de ejecución (reales)
+        if logs:
+            import html as _html
+            log_text = _html.escape("\n".join(logs))
+            html += f"""
+        <h2 style="color:#00ff99;margin:30px 0 15px;">📝 LOGS DE EJECUCIÓN</h2>
+        <pre style="background:#0a1428;border:1px solid #00ff99;border-radius:8px;
+                    padding:18px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;
+                    color:#c8e6d4;font-size:12px;line-height:1.6;">{log_text}</pre>
+"""
+
         html += """
         <div class="footer">
             <p>Este reporte ha sido generado automáticamente por GREENSOFT Testing Framework</p>

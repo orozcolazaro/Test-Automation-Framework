@@ -268,9 +268,10 @@ def test_report_pdf(session_id):
         
         session = test_sessions[session_id]
 
-        # Bugs y casos de prueba reales detectados en la sesión
+        # Bugs, casos de prueba y logs reales detectados en la sesión
         bugs = session.get("bugs", [])
         test_cases = session.get("test_cases", [])
+        logs = test_logs.get(session_id, [])
 
         # Generar PDF
         pdf_gen = PDFReportGenerator()
@@ -283,7 +284,7 @@ def test_report_pdf(session_id):
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
             pdf_path = tmp.name
         
-        pdf_gen.generate_pdf(pdf_path, session_id, session['target_url'], session['mode'], bugs, test_cases)
+        pdf_gen.generate_pdf(pdf_path, session_id, session['target_url'], session['mode'], bugs, test_cases, logs)
         
         with open(pdf_path, 'rb') as f:
             pdf_data = f.read()
@@ -320,9 +321,11 @@ def test_report_istqb(session_id):
             "expected": b.get("expected", ""),
             "actual": b.get("actual", ""),
             "impact": b.get("impact", ""),
+            "steps": b.get("steps", []),
             "services": b.get("services", []),
         })
-    html = report.generate_html_report(session_id, session["target_url"], session["mode"])
+    logs = test_logs.get(session_id, [])
+    html = report.generate_html_report(session_id, session["target_url"], session["mode"], logs)
     return app.response_class(html, mimetype="text/html")
 
 

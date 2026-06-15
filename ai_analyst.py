@@ -29,6 +29,7 @@ OUTPUT_CONTRACT = """Devuelve EXCLUSIVAMENTE un objeto JSON (sin texto extra, si
       "expected": "Comportamiento esperado.",
       "actual": "Comportamiento observado según los hechos.",
       "impact": "Impacto en usuario o negocio.",
+      "steps": ["1. ...", "2. ...", "3. ..."],
       "services": ["Frontend"]
     }
   ],
@@ -143,6 +144,9 @@ def normalize_bug(bug: dict) -> dict:
     services = bug.get("services") or []
     if isinstance(services, str):
         services = [services]
+    steps = bug.get("steps") or []
+    if isinstance(steps, str):
+        steps = [steps]
     return {
         "severity": sev,
         "type": sev.lower(),  # compat con el formato del reporte/UI existente
@@ -151,6 +155,7 @@ def normalize_bug(bug: dict) -> dict:
         "expected": str(bug.get("expected", "")),
         "actual": str(bug.get("actual", "")),
         "impact": str(bug.get("impact", "")),
+        "steps": [str(s) for s in steps],
         "services": [str(s) for s in services],
     }
 

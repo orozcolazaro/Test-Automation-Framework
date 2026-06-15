@@ -9,6 +9,23 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from datetime import datetime
+from xml.sax.saxutils import escape
+
+# Helvetica/Courier no renderizan emojis: los traducimos a marcadores ASCII.
+_EMOJI_MAP = {
+    "🔧": "[tool]", "✓": "[ok]", "✗": "[x]", "⚠": "[!]",
+    "🟢": "[ok]", "🔴": "[x]", "🟠": "[!]", "🟡": "[~]", "⚪": "[-]",
+}
+
+
+def _clean_log(line: str) -> str:
+    """Escapa caracteres XML y reemplaza emojis para que el PDF no muestre cajas."""
+    for emoji, repl in _EMOJI_MAP.items():
+        line = line.replace(emoji, repl)
+    # Quita cualquier otro caracter no-latino que Courier no pueda dibujar.
+    line = "".join(c if ord(c) < 0x2500 else "?" for c in line)
+    return escape(line)
+
 
 class PDFReportGenerator:
     def __init__(self):
@@ -90,11 +107,21 @@ class PDFReportGenerator:
             alignment=TA_CENTER,
             leading=12
         ))
+
+        self.styles.add(ParagraphStyle(
+            name='LogLine',
+            fontName='Courier',
+            fontSize=7,
+            leading=9,
+            textColor=colors.black,
+            wordWrap='CJK'  # corta líneas de log muy largas
+        ))
     
     def generate_pdf(self, filename: str, session_id: str, target_url: str,
-                     mode: str, bugs: list, test_cases: list = None):
+                     mode: str, bugs: list, test_cases: list = None, logs: list = None):
         """Genera PDF con reporte ISTQB"""
         test_cases = test_cases or []
+        logs = logs or []
         
         doc = SimpleDocTemplate(
             filename,
@@ -120,6 +147,8 @@ class PDFReportGenerator:
             ['URL Testeada:', Paragraph(target_url, sv)],
             ['Session ID:', Paragraph(session_id, sv)],
             ['Modo:', Paragraph(mode.upper(), sv)],
+            ['Entorno:', Paragraph('Análisis vía HTTP (sin navegador)', sv)],
+            ['Reportado por:', Paragraph('GREENSOFT Testing Framework', sv)],
             ['Fecha:', Paragraph(datetime.now().strftime('%d/%m/%Y %H:%M:%S'), sv)]
         ]
         
@@ -202,6 +231,8 @@ class PDFReportGenerator:
                 ('RESULTADO ACTUAL:', bug.get('actual', '')),
                 ('IMPACTO:', bug.get('impact', '')),
             ]
+            if bug.get('steps'):
+                detail_rows.append(('PASOS PARA REPRODUCIR:', '<br/>'.join(bug.get('steps', []))))
             if bug.get('services'):
                 detail_rows.append(('SERVICIOS:', ', '.join(bug.get('services', []))))
 
@@ -249,6 +280,23 @@ class PDFReportGenerator:
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ]))
             story.append(tc_table)
+
+        # Logs de ejecución (reales)
+        if logs:
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("LOGS DE EJECUCIÓN", self.styles['BugTitle']))
+            story.append(Spacer(1, 8))
+            log_rows = [[Paragraph(_clean_log(l), self.styles['LogLine'])] for l in logs]
+            log_table = Table(log_rows, colWidths=[6.2*inch])
+            log_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f5f5f5')),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.grey),
+            ]))
+            story.append(log_table)
 
         # Footer
         story.append(Spacer(1, 20))
